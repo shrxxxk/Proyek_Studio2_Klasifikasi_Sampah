@@ -1,0 +1,12 @@
+# Dependencies for klasifikasi-sampah (EfficientNet-B3)
+# Install a PyTorch build compatible with your Python version and hardware.
+torch
+torchvision
+numpy
+opencv-python
+pandas
+tqdm
+matplotlib
+scikit-learn
+seaborn
+torchinfo
