@@ -46,3 +46,7 @@ evaluate.py         # salinan skrip evaluasi resmi
 ...                 # kode/notebook pelatihan kelompok
 ```
 
+## Link model.pth
+```
+https://github.com/shrxxxk/Proyek_Studio2_Klasifikasi_Sampah/releases/tag/v1.7.0
+```
