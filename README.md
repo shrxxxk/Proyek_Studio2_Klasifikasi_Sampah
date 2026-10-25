@@ -171,6 +171,6 @@ Model terbaik (**ResNet-18**, Macro-F1: 83.49%) dan checkpoint hasil eksperimen 
 ```
 checkpoints/
 # Atau link rilis GitHub kelompok:
-https://github.com/nelwanfakhri/Studio2_CIFAR10_CNN/releases
+https://github.com/shrxxxk/Proyek_Studio2_Klasifikasi_Sampah/releases/tag/v1.7.0
 ```
 
