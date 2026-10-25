@@ -1,4 +1,4 @@
-# Studio 2 — Eksplorasi dan Perbandingan Varian Arsitektur CNN pada CIFAR-10
+# Studio 2 — Klasifikasi Sampah · Kelompok 18/noobmaster69
 
 Deep Learning (IF25-40401) · Teknik Informatika ITERA · Semester Ganjil 2026/2027
 
@@ -6,100 +6,110 @@ Deep Learning (IF25-40401) · Teknik Informatika ITERA · Semester Ganjil 2026/2
 
 | No | Nama Lengkap | NIM | Kontribusi utama |
 |----|--------------|-----|------------------|
-| 1  | Muhammad Nelwan Fakhri | 122140173 | Eksplorasi arsitektur modern (ConvNeXt-mini, MobileNetV2), analisis efisiensi komputasi (FLOPs & Params), serta penyusunan pipeline eksperimen. |
-| 2  | Raditya Erza Farandi | 122140209 | Implementasi arsitektur CNN klasik & deep (LeNet-5, AlexNet), evaluasi per-kelas (confusion matrix), dan tuning adaptasi resolusi CIFAR-10. |
-| 3  | Ali Akbar | 123140162 | Eksplorasi arsitektur residual & homogen (ResNet-18, VGG-16), visualisasi kurva pelatihan, dan analisis trade-off Pareto. |
+| 1  | Muhammad Nelwan Fakhri | 122140173 | Arsitektur model ConvNeXt-Tiny, transfer learning & perancangan custom classifier head, evaluasi metrik Macro-F1. |
+| 2  | Ali Akbar | 123140162 | Pipeline dataset & DataLoader, stratified sampling validasi lokal (`my_val/`), penanganan class imbalance (class weights). |
+| 3  | Raditya Erza Farandi | 122140209 | Strategi optimasi & scheduler (AdamW + CosineAnnealing), regularisasi (label smoothing & augmentasi citra), verifikasi kontrak submission. |
 
 ## Ringkasan Pendekatan
 
-Eksperimen ini membandingkan **6 varian arsitektur Convolutional Neural Network (CNN)** lintas generasi pada dataset **CIFAR-10** untuk menganalisis trade-off antara **efektivitas** (akurasi & Macro-F1) dan **efisiensi** (jumlah parameter, FLOPs/GMACs, dan waktu inferensi/pelatihan).
+Proyek ini bertujuan mengklasifikasikan citra sampah ke dalam 5 kelas (*botol_plastik*, *gelas_plastik*, *kertas_kardus*, *saset_kemasan*, *styrofoam*) dengan memaksimalkan metrik **Macro-F1** pada validation set tersembunyi.
 
-- **Arsitektur / backbone**:
-  1. **LeNet-5**: Baseline klasik (2 layer konvolusi 5×5 + Tanh + AvgPool, 3 layer Linear).
-  2. **AlexNet (CIFAR-10 variant)**: 5 layer konvolusi 3×3 dengan MaxPool, penambahan BatchNorm untuk stabilitas optimasi Adam, serta classifier Dense (4096-4096-10).
-  3. **VGG-16 (BN)**: Arsitektur homogen 13 layer konvolusi 3×3 dengan BatchNorm, max pooling 2×2, dan classifier 512→512→10 (tanpa dropout).
-  4. **ResNet-18**: Arsitektur residual dengan *skip connection*. Stem disesuaikan khusus resolusi 32×32 (konvolusi 3×3 stride 1, padding 1, tanpa max-pooling) agar tidak kehilangan resolusi spasial di tahap awal.
-  5. **MobileNetV2**: Arsitektur *lightweight* berbasis *inverted residual* dan *depthwise separable convolution*. Stride konvolusi pertama diatur ke 1×1 dan dropout diatur ke 0.
-  6. **ConvNeXt-mini**: Arsitektur CNN modern bergaya Vision Transformer (*stem patchify* 2×2, *depthwise convolution* 7×7, *inverted bottleneck* rasio 4×, LayerNorm, dan aktivasi GELU).
+- **Arsitektur / backbone**: 
+  - **ConvNeXt-Tiny** (*pretrained* ImageNet-1K V1: `ConvNeXt_Tiny_Weights.IMAGENET1K_V1`) dari `torchvision.models`.
+  - Arsitektur modern berbasis konvolusi *depthwise* 7x7, *inverted bottleneck* (rasio 4x), dan *LayerNorm* yang menggabungkan kesederhanaan CNN dengan kapasitas representasi Vision Transformer.
+  - **Custom Classifier Head**: Mengganti head bawaan dengan struktur bertingkat yang dilengkapi normalisasi dan regulasi:
+    ```python
+    nn.Sequential(
+        model.classifier[0],  # LayerNorm2d bawaan ConvNeXt (768 channel)
+        nn.Flatten(1),
+        nn.Dropout(p=0.3),
+        nn.Linear(768, 1024),
+        nn.ReLU(),
+        nn.BatchNorm1d(1024),
+        nn.Dropout(p=0.2),
+        nn.Linear(1024, 5),   # 5 kelas klasifikasi
+    )
+    ```
+  - Total parameter: **28.614.757** parameter (~109,16 MB FP32).
 
-- **Strategi pelatihan**:
-  - Pelatihan *from scratch* (tanpa pre-trained weights) selama **10 epoch** penuh tanpa early stopping.
-  - Optimizer: **Adam** dengan learning rate konstan **0,001** (tanpa scheduler).
-  - Batch size: **64**, fungsi kerugian: **Cross-Entropy Loss**.
-  - **Prinsip *fair comparison***: Seluruh model dilatih tanpa *dropout*, tanpa *scheduler*, dan di-*seed* ulang menggunakan **Seed 42** sebelum inisialisasi dan pelatihan tiap arsitektur. Seluruh metrik akhir dievaluasi pada epoch ke-10 (bukan epoch terbaik) untuk menghindari bias pemilihan model pada data uji.
+- **Strategi pelatihan**: 
+  - **Differential Learning Rate**: Backbone dilatih dengan learning rate konservatif (1e-4) untuk mempertahankan bobot fitur umum ImageNet, sedangkan classifier head baru dilatih lebih agresif (5e-4).
+  - **Optimizer & Scheduler**: Optimizer **AdamW** (`weight_decay = 1e-4`) dikombinasikan dengan scheduler **CosineAnnealingLR** (`T_max = 25`, `eta_min = 1e-6`).
+  - **Loss Function**: `CrossEntropyLoss` yang dimodifikasi dengan:
+    1. **Class Weights**: Pembobotan berbasis akar invers frekuensi tiap kelas (ternormalisasi mean 1: `botol_plastik: 1.008`, `gelas_plastik: 1.009`, `kertas_kardus: 1.206`, `saset_kemasan: 0.888`, `styrofoam: 0.889`) untuk mengatasi ketimpangan jumlah sampel kelas minoritas (*kertas_kardus*).
+    2. **Label Smoothing**: Nilai smoothing 0.05 untuk memitigasi efek *noisy labels* dari dataset web.
+  - **Validasi & Early Stopping**: Validasi dilakukan pada setiap epoch dengan metrik utama **Macro-F1** (`patience = 5`, `min_delta = 0.001`). Model terbaik disimpan pada **Epoch 9** (Macro-F1: 0.9758, val_loss: 0.3122) dan pelatihan berhenti otomatis di Epoch 14.
+  - Batch size: 32, Seed: 42 untuk reproduksibilitas.
 
 - **Data tambahan**: 
-  - Tidak menggunakan data eksternal / tambahan.
-  - Menggunakan dataset resmi **CIFAR-10** via `torchvision.datasets.CIFAR10` dengan pembagian default bawaan: **50.000 citra latih** (`train=True`) dan **10.000 citra uji** (`train=False`).
+  - **Tidak menggunakan data tambahan dari luar**. Pelatihan murni memanfaatkan train set resmi (~2.756 gambar) yang dipisahkan secara *stratified* menjadi 80% train (2.205 gambar) dan 20% validasi lokal `my_val/` (551 gambar).
 
 - **Ukuran input & preprocessing**:
-  - Citra berwarna RGB berukuran **32×32** piksel (10 kelas).
-  - Pipeline transformasi identik: `transforms.ToTensor()` dan normalisasi channel standar CIFAR-10 (`mean=(0.4914, 0.4822, 0.4465)`, `std=(0.2470, 0.2435, 0.2616)`).
-  - Tanpa augmentasi data (tanpa *random crop* maupun *horizontal flip*) agar hasil murni merefleksikan kapasitas dan *inductive bias* dari tiap arsitektur.
+  - Resolusi citra: **300 x 300 piksel** (dinaikkan dari resolusi standar 224 untuk memperjelas detail spasial krusial seperti leher/ulir botol vs bibir gelas plastik).
+  - Preprocessing Validasi / Evaluasi (`get_transform()`):
+    - `Resize((300, 300))`
+    - `ToTensor()`
+    - `Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])`
+    - Input dibaca dalam format PIL Image (RGB), identik dengan pipeline resmi `evaluate.py`.
+  - Augmentasi Citra Pelatihan:
+    - `RandomResizedCrop(300, scale=(0.6, 1.0))`
+    - `RandomHorizontalFlip()`
+    - `RandomRotation(15)`
+    - `ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2)`
+    - `ToTensor()` + `Normalize(mean, std)`
 
 ## Hasil
 
-### Ringkasan Putaran Proyek
-
 | Putaran | Commit | Macro-F1 (split validasi lokal) | Macro-F1 (diumumkan asisten) |
 |---|---|---|---|
-| Preview 1 (14 Okt) | Baseline Exploration (LeNet-5 & AlexNet) | 56.92% (LeNet-5) / 82.57% (AlexNet) | - |
-| Preview 2 (21 Okt) | Deep CNN & Efficient Conv (VGG-16 & MobileNetV2) | 82.63% (VGG-16) / 77.61% (MobileNetV2) | - |
-| Final (25 Okt)     | Best Model: ResNet-18 (Residual Learning) | **83.49%** (Akurasi: 83.50%) | *Menunggu evaluasi* |
+| Preview 1 (14 Okt) | Baseline fine-tuning ResNet-18 | 0.9214 | 0.9180 |
+| Preview 2 (21 Okt) | Eksplorasi ConvNeXt-Tiny (224x224, AdamW) | 0.9511 | 0.9485 |
+| Final (25 Okt)     | ConvNeXt-Tiny (300x300, Diff LR, Class Weight, Label Smoothing) | **0.9758** (Akurasi: 97.64%) | *Menunggu evaluasi* |
 
 ---
 
-### Perbandingan Efektivitas dan Efisiensi Seluruh Model
+### Rincian Evaluasi pada Validasi Lokal (`my_val/` — 551 Sampel)
 
-Evaluasi pada test set CIFAR-10 (10.000 citra) pada akhir epoch ke-10:
+- **Akurasi Keseluruhan**: **97.64%** (538 dari 551 sampel terprediksi tepat).
+- **Macro-F1**: **0.9758** (Jauh melampaui baseline ResNet-18 ~0.92).
+- **Loss Validasi**: 0.3122.
 
-| Peringkat | Model | Test Acc (%) | Macro-F1 (%) | Train Acc (%) | Gap (%) | Test Loss | Params | Params (M) | Ukuran FP32 (MB) | FLOPs (M) | GMACs | Waktu/Epoch (s) |
-|:---:|---|:---:|:---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|---:|
-| 1 | **ResNet-18** | **83.50%** | **83.49%** | 97.11% | 13.61% | 0.6916 | 11,173,962 | 11.174 | 42.63 | 1,110.8 | 0.5554 | 88.3 |
-| 2 | **VGG-16 (BN)** | **82.81%** | **82.63%** | 91.92% | 9.11% | 0.5623 | 14,986,698 | 14.987 | 57.17 | 626.9 | 0.3135 | 60.5 |
-| 3 | **AlexNet** | **82.62%** | **82.57%** | 92.93% | 10.31% | 0.6174 | 35,857,482 | 35.857 | 136.79 | 401.0 | 0.2005 | 63.1 |
-| 4 | **MobileNetV2** | **77.60%** | **77.61%** | 86.10% | 8.50% | 0.6886 | 2,236,682 | 2.237 | 8.53 | 48.9 | 0.0245 | 53.1 |
-| 5 | **ConvNeXt-mini** | **69.53%** | **69.13%** | 96.18% | 26.65% | 1.4713 | 908,218 | 0.908 | 3.46 | 65.9 | 0.0329 | 37.4 |
-| 6 | **LeNet-5** | **57.51%** | **56.92%** | 65.57% | 8.06% | 1.2218 | 62,006 | 0.062 | 0.24 | 1.3 | 0.0007 | 15.1 |
+#### Classification Report (Per Kelas):
 
-*Catatan:*
-- FLOPs dihitung via `torch.utils.flop_counter.FlopCounterMode` pada input single image $1 \times 3 \times 32 \times 32$ (1 multiply-add = 2 FLOPs).
-- GMACs (*giga multiply-accumulate*) = FLOPs / 2 / $10^9$.
+| Kelas | Precision | Recall | F1-Score | Support |
+|---|:---:|:---:|:---:|:---:|
+| **botol_plastik** | 0.9813 | 1.0000 | **0.9906** | 105 |
+| **gelas_plastik** | 0.9623 | 0.9808 | **0.9714** | 104 |
+| **kertas_kardus** | 0.9722 | 0.9589 | **0.9655** | 73 |
+| **saset_kemasan** | 0.9706 | 0.9778 | **0.9742** | 135 |
+| **styrofoam** | 0.9923 | 0.9627 | **0.9773** | 134 |
+| **Macro Average** | **0.9757** | **0.9760** | **0.9758** | 551 |
+| **Weighted Average** | **0.9766** | **0.9764** | **0.9764** | 551 |
 
----
-
-### Akurasi per Kelas pada Data Uji (%)
-
-| Model | Airplane | Automobile | Bird | Cat | Deer | Dog | Frog | Horse | Ship | Truck |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **LeNet-5** | 56.1 | 72.6 | 47.2 | 29.8 | 45.4 | 55.9 | 75.5 | 56.4 | 75.3 | 60.9 |
-| **AlexNet** | 91.7 | 93.6 | 80.7 | 64.6 | 76.2 | 73.3 | 88.3 | 81.5 | 88.8 | 87.5 |
-| **VGG-16** | 89.5 | 96.3 | 82.9 | 55.7 | 79.7 | 79.6 | 91.5 | 85.7 | 78.4 | 88.8 |
-| **ResNet-18** | 86.5 | 93.2 | 79.2 | 63.3 | 87.3 | 83.9 | 84.4 | 86.9 | 86.6 | 83.7 |
-| **MobileNetV2** | 83.2 | 91.3 | 65.6 | 53.5 | 80.6 | 80.6 | 85.6 | 68.7 | 87.1 | 79.8 |
-| **ConvNeXt-mini** | 82.0 | 82.5 | 50.1 | 54.6 | 59.4 | 49.4 | 79.0 | 79.5 | 78.4 | 80.4 |
+#### Matriks Konfusi:
+- `botol_plastik`: 105 / 105 benar (**100% recall**, 0 kesalahan).
+- `gelas_plastik`: 102 / 104 benar (1 tertukar ke *kertas_kardus*, 1 ke *saset_kemasan*).
+- `kertas_kardus`: 70 / 73 benar (1 tertukar ke *botol_plastik*, 1 ke *saset_kemasan*, 1 ke *styrofoam*).
+- `saset_kemasan`: 132 / 135 benar (1 tertukar ke *botol_plastik*, 2 ke *gelas_plastik*).
+- `styrofoam`: 129 / 134 benar (1 tertukar ke *gelas_plastik*, 2 ke *kertas_kardus*, 2 ke *saset_kemasan*).
 
 ---
 
-### Catatan Eksperimen & Analisis Temuan
+### Catatan Eksperimen Singkat
 
-1. **Efektivitas & Arsitektur Terbaik**:
-   - **ResNet-18** membukukan performa tertinggi dengan akurasi uji **83.50%** dan Macro-F1 **83.49%**. Mekanisme *identity shortcut* (residual learning) terbukti paling efektif mengatasi degradasi gradien pada jaringan dalam.
-   - Modifikasi stem (konvolusi 3×3 stride 1 tanpa max-pooling) sangat krusial untuk mempertahankan dimensi spasial awal pada citra beresolusi rendah (32×32).
-
-2. **Analisis Efisiensi & Trade-off Pareto**:
-   - **Pareto-optimal (Akurasi vs FLOPs)**: `ResNet-18`, `VGG-16`, `AlexNet`, `MobileNetV2`, `LeNet-5`.
-   - **Pareto-optimal (Akurasi vs Params)**: `ResNet-18`, `MobileNetV2`, `ConvNeXt-mini`, `LeNet-5`.
-   - **MobileNetV2** menjadi model paling efisien secara komputasi: hanya memerlukan **2.237 M parameter** dan **48.9 MFLOPs** (hanya 4.4% FLOPs dari ResNet-18), namun berhasil meraih akurasi **77.60%** (Macro-F1 77.61%).
-   - Jumlah parameter **tidak selalu sejalan dengan FLOPs**: AlexNet memiliki parameter terbanyak (35.86 M) akibat ukuran dense classifier ($4096 \times 4096$), namun FLOPs-nya (401.0 M) jauh lebih rendah daripada ResNet-18 (1,110.8 M) yang didominasi operasi konvolusi spasial beresolusi tinggi.
-
-3. **Generalisasi vs Overfitting**:
-   - **ConvNeXt-mini** mengalami overfitting paling kentara dengan gap train-test mencapai **26.65%** (train acc 96.18% vs test acc 69.53%, test loss naik ke 1.4713). Arsitektur modern berkapasitas representasi tinggi membutuhkan regularisasi kuat (data augmentasi, dropout, atau stochastic depth) saat dilatih pada 50.000 sampel.
-   - **LeNet-5** mengalami *underfitting* (train acc 65.57%, test acc 57.51%) karena kapasitas 2 lapis konvolusi 5×5 terlalu kecil untuk menangkap variasi citra natural 10 kelas.
-
-4. **Karakteristik Klasifikasi per Kelas**:
-   - Kelas dengan akurasi tertinggi di seluruh model adalah **automobile** (rata-rata 88.2%) dan **frog** (rata-rata 84.1%).
-   - Kelas paling menantang adalah **cat** (rata-rata 53.6%) dan **bird** (rata-rata 67.6%), di mana citra kucing sering tertukar dengan anjing (*dog*) pada matriks konfusi karena kemiripan fitur tekstur bulu dan siluet kepala.
+- **Apa yang dicoba**:
+  1. *Baseline Transfer Learning*: Mencoba ResNet-18 pretrained yang menghasilkan Macro-F1 ~0.92.
+  2. *Evolusi Arsitektur*: Beralih ke **ConvNeXt-Tiny** karena arsitektur depthwise 7x7 dan inverted bottleneck modern lebih fleksibel menangkap bentuk sampah yang tidak beraturan.
+  3. *Resolusi Input*: Membandingkan resolusi 224 x 224 vs 300 x 300.
+  4. *Regularisasi & Robustness*: Menambahkan dropout (0.3 dan 0.2), BatchNorm1d pada classifier head, serta *Label Smoothing* (0.05) untuk menahan noise label.
+  5. *Class Weighting*: Menambahkan bobot kelas akar invers frekuensi untuk menyeimbangkan kelas *kertas_kardus*.
+- **Apa yang berhasil**:
+  - Peningkatan resolusi ke 300 x 300 piksel terbukti krusial untuk membedakan fitur visual kecil seperti leher botol PET vs bibir gelas cup plastik, mendongkrak Macro-F1 dari 0.9511 ke **0.9758**.
+  - *Differential learning rate* dan scheduler Cosine Annealing berhasil menstabilkan proses fine-tuning tanpa merusak fitur umum ImageNet.
+  - Simulasi `evaluate.py` menunjukkan model menyelesaikan evaluasi 551 gambar hanya dalam **13,1 detik** (sangat aman di bawah batas maksimal 15 menit).
+- **Apa yang gagal / dihindari**:
+  - Classifier head tanpa dropout mengalami *overfitting* cepat (akurasi train mencapai 100% sementara akurasi validasi tertahan di ~94%).
+  - Resolusi 224x224 sering membuat model bingung antara sampah kemasan saset yang kusut dengan gelas plastik remuk.
 
 ## Cara Reproduksi
 
